@@ -1,4 +1,5 @@
 const { ApolloServer, gql } = require('apollo-server')
+const uuid = require('uuid/v1')
 
 let authors = [
   {
@@ -85,14 +86,81 @@ let books = [
 ]
 
 const typeDefs = gql`
+  type Book {
+    title: String!
+    published: Int!
+    author: ID!
+    id: ID!
+    genres: [String!]!
+  }
+
+  type Author {
+    name: String!
+    id: ID!
+    born: Int
+    bookCount: Int!
+  }
+
   type Query {
-    hello: String!
+    bookCount: Int!
+    authorCount: Int!
+    allBooks(author: String, genre: String): [Book!]!
+    allAuthors: [Author!]!
+  }
+
+  type Mutation {
+    addBook(
+      title: String!
+      author: String!
+      published: Int!
+      genres: [String!]!
+    ): Book
+    editAuthor(
+      name: String!
+      setBornTo: Int!
+    ): Author
   }
 `
 
 const resolvers = {
   Query: {
-    hello: () => { return "world" }
+    bookCount: () => { return books.length },
+    authorCount: () => { return authors.length },
+    allBooks: (root, args) => { 
+      if (!args) return books 
+      return books.filter(book => {
+        const author = args.author ? book.author === args.author : true
+        const genre = args.genre ? book.genres.includes(args.genre) : true
+        return author && genre
+      })
+    },
+    allAuthors: () => { return authors }
+  },
+  Mutation: {
+    addBook: (root, args) => {
+      const book = { ...args, id: uuid() }
+      books = books.concat(book)
+      if (!authors.includes(args.author)) {
+        const author = { name: args.author, id: uuid() }
+        authors = authors.concat(author)
+      }
+      return book
+    },
+    editAuthor: (root, args) => {
+      const author = authors.find((author) => author.name === args.name)
+      if (!author) return null
+
+      const updatedAuthor = { ...author, born: args.setBornTo }
+      authors = authors.map(author => author.name === args.name ? updatedAuthor : author)
+      return updatedAuthor
+    }
+  },
+  Author: {
+    bookCount: (root) => { 
+      return books.reduce((count, book) => book.author === root.name 
+        ? count + 1 
+        : count, 0)
+    }
   }
 }
 

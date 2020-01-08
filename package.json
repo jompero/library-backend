@@ -4,7 +4,7 @@
   "description": "",
   "main": "library-backend.js",
   "scripts": {
-    "start": "node library-backend.js",
+    "start": "nodemon library-backend.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Dani Jompero",
@@ -12,5 +12,8 @@
   "dependencies": {
     "apollo-server": "^2.9.15",
     "graphql": "^14.5.8"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.2"
   }
 }
