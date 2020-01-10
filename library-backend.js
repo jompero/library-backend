@@ -1,6 +1,6 @@
 require('dotenv').config()
 const jwt = require('jsonwebtoken')
-const { ApolloServer, UserInputError, AuthenticationError, gql } = require('apollo-server')
+const { ApolloServer, UserInputError, AuthenticationError, gql, PubSub } = require('apollo-server')
 const uuid = require('uuid/v1')
 const mongoose = require('mongoose')
 const Book = require('./models/book')
@@ -21,6 +21,8 @@ mongoose.connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true 
   .catch((error) => {
     console.log('error connecting to MongoDB:', error.message)
   })
+
+const pubsub = new PubSub()
 
 const typeDefs = gql`
   type Author {
@@ -48,12 +50,17 @@ const typeDefs = gql`
     value: String!
   }
 
+  type Genres {
+    values: [String!]!
+  }
+
   type Query {
     bookCount: Int!
     authorCount: Int!
     allBooks(author: String, genre: String): [Book!]!
     allAuthors: [Author!]!
     me: User
+    allGenres: Genres!
   }
 
   type Mutation {
@@ -76,23 +83,39 @@ const typeDefs = gql`
       password: String!
     ): Token
   }
+
+  type Subscription {
+    bookAdded: Book!
+  }
 `
 
 const resolvers = {
   Query: {
     bookCount: () => { return Book.collection.countDocuments() },
     authorCount: () => { return Author.collection.countDocuments() },
-    allBooks: (root, args) => { 
+    allBooks: async (root, args) => { 
       if (!args.author && !args.genre) return Book.find({}) 
       let query = {}
       if(args.author) query.author = args.author
       if(args.genre) query.genres = args.genre
       console.log(query)
-      return Book.find(query)
+      const books = await Book.find(query)
+      return books ? books : []
     },
     allAuthors: () => { return Author.find({}) },
     me: (root, args, context) => {
       return context.currentUser
+    },
+    allGenres: async () => {
+      // There's probably a better/cleaner way to filter the genres out :D
+      const books = await Book.find({})
+      const genres = books.map(book => {
+        return book.genres
+      })
+      console.log(genres)
+      const uniqueGenres = [ ...new Set(genres.flat())]
+      console.log(uniqueGenres)
+      return {values: uniqueGenres }
     }
   },
   Mutation: {
@@ -107,13 +130,19 @@ const resolvers = {
       let book
       try {
         const author = await Author.findOneAndUpdate({ name: args.author}, { name: args.author }, { upsert: true, new: true, runValidators: true })
+        author.bookCount = author.bookCount ? author.bookCount + 1 : 1
+        await author.save()
+        
         book = new Book({ ...args, author })
         await book.save()
+
       } catch (error) {
         throw new UserInputError(error.message, {
           invalidArgs: args,
         })
       }
+
+      pubsub.publish('BOOK_ADDED', { bookAdded: book })
       return book
     },
     editAuthor: async (root, args, context) => {
@@ -177,24 +206,24 @@ const resolvers = {
       }
     }
   },
-  Author: {
-    bookCount: (root) => { 
-      return Book.count({ author: root.id })
-    }
+  Subscription: {
+    bookAdded: {
+      subscribe: () => pubsub.asyncIterator(['BOOK_ADDED'])
+    },
   }
 }
 
 const context = async ({ req }) => {
-  console.log('running context', req.headers)
+  //console.log('running context', req.headers)
   const auth = req ? req.headers.authorization : null
-  console.log('auth', auth)
+  //console.log('auth', auth)
   if (auth && auth.toLowerCase().startsWith('bearer ')) {
     const decodedToken = jwt.verify(
       auth.substring(7), SECRET
     )
-    console.log('decoded token', decodedToken)
+    //console.log('decoded token', decodedToken)
     const currentUser = await User.findById(decodedToken.id).populate('friends')
-    console.log('user', currentUser)
+    //console.log('user', currentUser)
     return { currentUser }
   }
 }
@@ -205,6 +234,7 @@ const server = new ApolloServer({
   context
 })
 
-server.listen().then(({ url }) => {
+server.listen().then(({ url, subscriptionsUrl }) => {
   console.log(`Server ready at ${url}`)
+  console.log(`Subs ready at ${subscriptionsUrl}`)
 })
